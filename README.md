@@ -1,8 +1,6 @@
 
 
-<img src="images/Chronos.png" alt="Chronos logo" align="right" width="140" />
-
-# Chronos
+# Chronos <img src="images/Chronos.png" alt="Chronos logo" align="right" width="140" style="vertical-align: text-bottom;" />
 
 A lightweight, asynchronous logging library for Go. Chronos writes colorized console output and rotates log files based on a configurable period (hour/day/week/month/year). It is initialized with a simple configuration and exposes convenience helpers for each level.
 
