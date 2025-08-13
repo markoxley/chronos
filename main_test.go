@@ -13,28 +13,40 @@
 package chronos
 
 import (
-	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"sync"
 	"testing"
 	"time"
 )
 
+// getConfig returns a baseline configuration used across tests and benchmarks.
+// Individual tests may override fields (e.g., Location) to run in temp dirs.
+func getConfig() *Config {
+	return &Config{
+		AppName:    "test",
+		Location:   "/tmp",
+		FilePeriod: LogPeriodHour,
+		Level:      INFO,
+	}
+}
+
+// TestNewLogging verifies that a new logger initializes the path, level, and
+// channel correctly using the provided configuration and log level.
 func TestNewLogging(t *testing.T) {
-	path := "/tmp/test.log"
+	path := "/tmp"
 	logLevel := 2
 
-	l := NewLogging(path, logLevel)
+	l := newLogging(getConfig(), logLevel)
 
 	if l.path != path {
 		t.Errorf("Expected path to be %s, but got %s", path, l.path)
 	}
 
-	if l.level != logLevel {
-		t.Errorf("Expected level to be %d, but got %d", logLevel, l.level)
+	if l.logLevel != logLevel {
+		t.Errorf("Expected level to be %d, but got %d", logLevel, l.logLevel)
 	}
 
 	if l.logChan == nil {
@@ -42,14 +54,18 @@ func TestNewLogging(t *testing.T) {
 	}
 }
 
+// TestAddLog validates that an INFO message is printed and persisted to the
+// expected file, using the configured rotation period and temp directory.
 func TestAddLog(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "logtest")
+	tempDir, err := os.MkdirTemp("", "logtest")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	logger = NewLogging(tempDir, logLevels[INFO])
+	cfg := getConfig()
+	cfg.Location = tempDir
+	logger = newLogging(cfg, logLevels[INFO])
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -61,13 +77,15 @@ func TestAddLog(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
+	// capture expected filename before stopping logger to avoid nil deref
+	filename := logger.filename(time.Now())
+
 	Stop()
 	wg.Wait()
 
-	filename := fmt.Sprintf("nexus_%s.log", time.Now().Format("2006-01-02"))
 	fullpath := filepath.Join(tempDir, filename)
 
-	content, err := ioutil.ReadFile(fullpath)
+	content, err := os.ReadFile(fullpath)
 	if err != nil {
 		t.Fatalf("could not read log file: %v", err)
 	}
@@ -77,8 +95,10 @@ func TestAddLog(t *testing.T) {
 	}
 }
 
+// TestLoggingLevels ensures level-based filtering works: DEBUG/INFO are
+// filtered when threshold is WARN, while WARN/ERROR are accepted.
 func TestLoggingLevels(t *testing.T) {
-	logger = NewLogging("/tmp", logLevels[WARN])
+	logger = newLogging(getConfig(), logLevels[WARN])
 
 	Debug("debug message")
 	Info("info message")
@@ -98,8 +118,11 @@ func TestLoggingLevels(t *testing.T) {
 	Stop()
 }
 
+// TestStop confirms Stop() closes the channel and clears the global logger.
 func TestStop(t *testing.T) {
-	logger = NewLogging("/tmp", logLevels[INFO])
+	cfg := getConfig()
+	cfg.Location = "/tmp"
+	logger = newLogging(cfg, logLevels[INFO])
 	go logger.start()
 
 	Stop()
@@ -109,12 +132,79 @@ func TestStop(t *testing.T) {
 	}
 }
 
+// TestAutoStopOnSIGTERM verifies that enabling AutoStop causes the logger to
+// gracefully stop when the process receives SIGTERM.
+func TestAutoStopOnSIGTERM(t *testing.T) {
+	// Ensure a clean slate
+	Stop()
+
+	tempDir, err := os.MkdirTemp("", "autostop-term")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	cfg := getConfig()
+	cfg.Location = tempDir
+	cfg.AutoStop = true
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Send SIGTERM to ourselves
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("failed to send SIGTERM: %v", err)
+	}
+
+	// Allow handler to run
+	time.Sleep(100 * time.Millisecond)
+
+	if logger != nil {
+		t.Error("expected logger to be nil after SIGTERM AutoStop, but it was not")
+	}
+}
+
+// TestAutoStopThenManualStop ensures calling Stop() after AutoStop has already
+// executed is safe and remains idempotent.
+func TestAutoStopThenManualStop(t *testing.T) {
+	// Ensure a clean slate
+	Stop()
+
+	tempDir, err := os.MkdirTemp("", "autostop-int")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	cfg := getConfig()
+	cfg.Location = tempDir
+	cfg.AutoStop = true
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Trigger AutoStop via SIGINT (Ctrl-C)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("failed to send SIGINT: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Now call Stop() manually — should be a no-op and not panic.
+	Stop()
+
+	if logger != nil {
+		t.Error("expected logger to be nil after AutoStop + Stop")
+	}
+}
+
+// setupBenchmark creates a temporary logger at DEBUG level and returns a
+// teardown function that stops the logger and cleans up the temp directory.
 func setupBenchmark(b *testing.B) func() {
-	tempDir, err := ioutil.TempDir("", "benchlog")
+	tempDir, err := os.MkdirTemp("", "benchlog")
 	if err != nil {
 		b.Fatal(err)
 	}
-	logger = NewLogging(tempDir, logLevels[DEBUG])
+	logger = newLogging(getConfig(), logLevels[DEBUG])
 	go logger.start()
 
 	return func() {
@@ -123,6 +213,7 @@ func setupBenchmark(b *testing.B) func() {
 	}
 }
 
+// BenchmarkInfo measures the throughput of logging INFO messages.
 func BenchmarkInfo(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()
@@ -132,6 +223,7 @@ func BenchmarkInfo(b *testing.B) {
 	}
 }
 
+// BenchmarkInfof measures the throughput of formatted INFO messages.
 func BenchmarkInfof(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()
@@ -141,6 +233,7 @@ func BenchmarkInfof(b *testing.B) {
 	}
 }
 
+// BenchmarkDebug measures the throughput of logging DEBUG messages.
 func BenchmarkDebug(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()
@@ -150,6 +243,7 @@ func BenchmarkDebug(b *testing.B) {
 	}
 }
 
+// BenchmarkDebugf measures the throughput of formatted DEBUG messages.
 func BenchmarkDebugf(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()
@@ -159,6 +253,7 @@ func BenchmarkDebugf(b *testing.B) {
 	}
 }
 
+// BenchmarkWarn measures the throughput of logging WARN messages.
 func BenchmarkWarn(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()
@@ -168,6 +263,7 @@ func BenchmarkWarn(b *testing.B) {
 	}
 }
 
+// BenchmarkWarnf measures the throughput of formatted WARN messages.
 func BenchmarkWarnf(b *testing.B) {
 	teardown := setupBenchmark(b)
 	defer teardown()

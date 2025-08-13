@@ -15,9 +15,14 @@
 package chronos
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -38,6 +43,7 @@ type Logging struct {
 }
 
 var logger *Logging
+var mu sync.Mutex
 
 // newLogging creates a new logger writing daily files to the given path and
 // filtering below the provided log level.
@@ -58,15 +64,20 @@ func Init(cfg *Config) error {
 	if cfg == nil {
 		cfg = &Config{}
 	}
-	if cfg.Location == "" {
-		cfg.Location = "/var/log/nexus"
+	if cfg.AppName == "" {
+		return errors.New("AppName is required")
 	}
-	if cfg.FilenameFormat == "" {
-		cfg.FilenameFormat = "log__%s.log"
+	if cfg.Location == "" {
+		if runtime.GOOS == "windows" {
+			cfg.Location = fmt.Sprintf("C:\\ProgramData\\%s\\logs", cfg.AppName)
+		} else {
+			cfg.Location = fmt.Sprintf("/var/log/%s", cfg.AppName)
+		}
 	}
 	if cfg.FilePeriod == "" {
-		cfg.FilePeriod = "24h"
+		cfg.FilePeriod = LogPeriodHour
 	}
+
 	if cfg.Level == "" {
 		cfg.Level = INFO
 	}
@@ -77,12 +88,60 @@ func Init(cfg *Config) error {
 	logger = newLogging(cfg, logLevel)
 	os.Mkdir(cfg.Location, 0755)
 	go logger.start()
+
+	// Optionally install automatic graceful shutdown on common termination signals.
+	if cfg.AutoStop {
+		sigc := make(chan os.Signal, 1)
+		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigc
+			Stop()
+		}()
+	}
 	return nil
 }
 
+// filename derives the log filename for the provided timestamp according to
+// the configured rotation period (`Config.FilePeriod`).
+//
+// Formats by period:
+// - LogPeriodHour  => nexus_YYYY-MM-DDTHH.log
+// - LogPeriodDay   => nexus_YYYY-MM-DD.log
+// - LogPeriodWeek  => nexus_YYYY-WW.log (ISO week number)
+// - LogPeriodMonth => nexus_YYYY-MM.log
+// - LogPeriodYear  => nexus_YYYY.log
+//
+// If an unknown period is configured, a daily filename is used as a fallback.
+func (l *Logging) filename(t time.Time) string {
+	datePart := ""
+	switch l.config.FilePeriod {
+	case LogPeriodHour:
+		datePart = t.Format("2006-01-02T15")
+	case LogPeriodDay:
+		datePart = t.Format("2006-01-02")
+	case LogPeriodWeek:
+		y, w := t.ISOWeek()
+		datePart = fmt.Sprintf("%04d-%02d", y, w)
+	case LogPeriodMonth:
+		datePart = t.Format("2006-01")
+	case LogPeriodYear:
+		datePart = t.Format("2006")
+	default:
+		return fmt.Sprintf("nexus_%s.log", t.Format("2006-01-02"))
+	}
+	return fmt.Sprintf("nexus_%s.log", datePart)
+}
+
+// start runs the background writer loop. It listens on l.logChan and appends
+// formatted log lines to the appropriate file (as determined by filename()).
+//
+// Notes:
+// - Files are opened in append mode and created if they don't exist.
+// - I/O errors are written to stderr and the loop continues.
+// - The loop terminates when the channel is closed by Stop().
 func (l *Logging) start() {
 	for log := range l.logChan {
-		filename := fmt.Sprintf("nexus_%s.log", log.TimeStamp.Format("2006-01-02"))
+		filename := l.filename(log.TimeStamp)
 		fullpath := filepath.Join(l.path, filename)
 
 		// Open the file in append mode, or create it if it doesn't exist.
@@ -111,7 +170,7 @@ func (l *Logging) addLog(log Log) {
 	if logger == nil {
 		return
 	}
-	if logLevels[log.Level] < l.level {
+	if logLevels[log.Level] < l.logLevel {
 		return
 	}
 
@@ -147,6 +206,8 @@ func (l *Logging) addLog(log Log) {
 
 // Stop gracefully shuts down the logger and releases the package-level logger.
 func Stop() {
+	mu.Lock()
+	defer mu.Unlock()
 	if logger == nil {
 		return
 	}
