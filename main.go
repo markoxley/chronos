@@ -217,6 +217,9 @@ func Stop() {
 
 // Error logs a message at ERROR level.
 func Error(msg string) {
+	if logger == nil {
+		return
+	}
 	log := Log{
 		TimeStamp: time.Now(),
 		Level:     "ERROR",
@@ -227,6 +230,9 @@ func Error(msg string) {
 
 // Info logs a message at INFO level.
 func Info(msg string) {
+	if logger == nil {
+		return
+	}
 	log := Log{
 		TimeStamp: time.Now(),
 		Level:     "INFO",
@@ -237,6 +243,9 @@ func Info(msg string) {
 
 // Debug logs a message at DEBUG level.
 func Debug(msg string) {
+	if logger == nil {
+		return
+	}
 	log := Log{
 		TimeStamp: time.Now(),
 		Level:     "DEBUG",
@@ -247,6 +256,9 @@ func Debug(msg string) {
 
 // Warn logs a message at WARN level.
 func Warn(msg string) {
+	if logger == nil {
+		return
+	}
 	log := Log{
 		TimeStamp: time.Now(),
 		Level:     "WARN",
@@ -257,6 +269,9 @@ func Warn(msg string) {
 
 // Fatal logs a message at FATAL level.
 func Fatal(msg string) {
+	if logger == nil {
+		return
+	}
 	log := Log{
 		TimeStamp: time.Now(),
 		Level:     "FATAL",
