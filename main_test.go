@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"runtime"
 	"syscall"
 	"sync"
 	"testing"
@@ -152,7 +153,14 @@ func TestAutoStopOnSIGTERM(t *testing.T) {
 	}
 
 	// Send SIGTERM to ourselves
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM not supported on Windows; skipping test")
+	}
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("failed to find process: %v", err)
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("failed to send SIGTERM: %v", err)
 	}
 
@@ -167,8 +175,8 @@ func TestAutoStopOnSIGTERM(t *testing.T) {
 // TestAutoStopThenManualStop ensures calling Stop() after AutoStop has already
 // executed is safe and remains idempotent.
 func TestAutoStopThenManualStop(t *testing.T) {
-	// Ensure a clean slate
-	Stop()
+    // Ensure a clean slate
+    Stop()
 
 	tempDir, err := os.MkdirTemp("", "autostop-int")
 	if err != nil {
@@ -179,14 +187,21 @@ func TestAutoStopThenManualStop(t *testing.T) {
 	cfg := getConfig()
 	cfg.Location = tempDir
 	cfg.AutoStop = true
-	if err := Init(cfg); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
+	    if err := Init(cfg); err != nil {
+        t.Fatalf("Init failed: %v", err)
+    }
 
-	// Trigger AutoStop via SIGINT (Ctrl-C)
-	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
-		t.Fatalf("failed to send SIGINT: %v", err)
-	}
+    // Trigger AutoStop via SIGINT (Ctrl-C)
+    if runtime.GOOS == "windows" {
+        t.Skip("SIGINT delivery not supported on Windows; skipping test")
+    }
+    p, err := os.FindProcess(os.Getpid())
+    if err != nil {
+        t.Fatalf("failed to find process: %v", err)
+    }
+    if err := p.Signal(os.Interrupt); err != nil {
+        t.Fatalf("failed to send SIGINT: %v", err)
+    }
 	time.Sleep(100 * time.Millisecond)
 
 	// Now call Stop() manually — should be a no-op and not panic.
