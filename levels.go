@@ -1,6 +1,6 @@
 // levels.go
 //
-// Chronos Logging - Log Levels
+// # Chronos Logging - Log Levels
 //
 // Defines human-readable log level strings and their corresponding
 // internal numeric severities used throughout the logging subsystem.
@@ -16,7 +16,8 @@
 // `Logging.addLog()` and when initializing the logger in `Init()`.
 //
 // Severity ordering (low -> high):
-//   INFO(1) < DEBUG(2) < WARN(3) < ERROR(4) < FATAL(5)
+//
+//	INFO(1) < DEBUG(2) < WARN(3) < ERROR(4) < FATAL(5)
 //
 // Note: Higher numbers are treated as more severe. Messages are emitted when
 // their severity is greater than or equal to the configured threshold.
@@ -27,11 +28,11 @@ package chronos
 // These constants are the canonical string representations written to the
 // console and log files, and accepted via `Config.Level`.
 const (
-    INFO  = "INFO"
-    DEBUG = "DEBUG"
-    WARN  = "WARN"
-    ERROR = "ERROR"
-    FATAL = "FATAL"
+	INFO  = "INFO"
+	DEBUG = "DEBUG"
+	WARN  = "WARN"
+	ERROR = "ERROR"
+	FATAL = "FATAL"
 )
 
 // logLevels maps level names to their internal severity for filtering.
@@ -42,9 +43,9 @@ const (
 // so any message with a severity lower than the configured threshold is
 // dropped before printing or enqueuing for file persistence.
 var logLevels map[string]int = map[string]int{
-    INFO:  1,
-    DEBUG: 2,
-    WARN:  3,
-    ERROR: 4,
-    FATAL: 5,
+	DEBUG: 1,
+	INFO:  2,
+	WARN:  3,
+	ERROR: 4,
+	FATAL: 5,
 }
