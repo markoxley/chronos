@@ -90,10 +90,22 @@ If `Location` is empty, `Init()` sets:
 
 Ensure your process has permissions to create/write in the directory.
 
+## Custom Handlers
+
+You can register a custom handler that will be invoked whenever a log message is processed. This is useful for forwarding logs to external services, metrics systems, or performing additional real-time processing.
+
+```go
+chronos.SetHandler(func(ts time.Time, level string, message string) {
+    // Perform custom logic here
+    fmt.Printf("Intercepted log: [%s] %s: %s\n", ts.Format(time.RFC3339), level, message)
+})
+```
+
 ## API Overview
 
 - `Init(cfg *Config) error`: Initialize global logger and start background writer.
 - `Stop()`: Gracefully closes channel and releases the global logger. Thread-safe.
+- `SetHandler(handler func(time.Time, string, string))`: Register a custom callback for each log entry.
 - Logging helpers:
   - `Info(msg string)`, `Warn(msg string)`, `Error(msg string)`, `Debug(msg string)`, `Fatal(msg string)`
   - `Infof(fmt string, ...)`, `Warnf(fmt string, ...)`, `Errorf(fmt string, ...)`, `Debugf(fmt string, ...)`, `Fatalf(fmt string, ...)`
@@ -134,6 +146,16 @@ cfg := &chronos.Config{
 if err := chronos.Init(cfg); err != nil { /* handle */ }
 // ... run app ...
 // Optional: chronos.Stop() is still safe to call manually
+```
+
+### Using a custom handler
+Intercept logs for external processing:
+```go
+chronos.SetHandler(func(ts time.Time, level string, message string) {
+    if level == "ERROR" {
+        sendSlackNotification(message)
+    }
+})
 ```
 
 ## Running tests and benchmarks

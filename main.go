@@ -44,6 +44,7 @@ type Logging struct {
 
 var logger *Logging
 var mu sync.Mutex
+var externalHandler func(time.Time, string, string)
 
 // newLogging creates a new logger writing daily files to the given path and
 // filtering below the provided log level.
@@ -201,6 +202,9 @@ func (l *Logging) addLog(log Log) {
 	}
 
 	fmt.Printf("%s%s\t%s\t%s%s\n", color, log.TimeStamp.Format("15:04:05"), log.Level, log.Message, colorReset)
+	if externalHandler != nil {
+		externalHandler(log.TimeStamp, log.Level, log.Message)
+	}
 	l.logChan <- log
 }
 
@@ -303,4 +307,8 @@ func Warnf(format string, args ...interface{}) {
 // Fatalf logs a formatted message at FATAL level.
 func Fatalf(format string, args ...interface{}) {
 	Fatal(fmt.Sprintf(format, args...))
+}
+
+func SetHandler(handler func(time.Time, string, string)) {
+	externalHandler = handler
 }
