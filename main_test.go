@@ -15,10 +15,10 @@ package chronos
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"runtime"
-	"syscall"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -175,8 +175,8 @@ func TestAutoStopOnSIGTERM(t *testing.T) {
 // TestAutoStopThenManualStop ensures calling Stop() after AutoStop has already
 // executed is safe and remains idempotent.
 func TestAutoStopThenManualStop(t *testing.T) {
-    // Ensure a clean slate
-    Stop()
+	// Ensure a clean slate
+	Stop()
 
 	tempDir, err := os.MkdirTemp("", "autostop-int")
 	if err != nil {
@@ -187,21 +187,21 @@ func TestAutoStopThenManualStop(t *testing.T) {
 	cfg := getConfig()
 	cfg.Location = tempDir
 	cfg.AutoStop = true
-	    if err := Init(cfg); err != nil {
-        t.Fatalf("Init failed: %v", err)
-    }
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 
-    // Trigger AutoStop via SIGINT (Ctrl-C)
-    if runtime.GOOS == "windows" {
-        t.Skip("SIGINT delivery not supported on Windows; skipping test")
-    }
-    p, err := os.FindProcess(os.Getpid())
-    if err != nil {
-        t.Fatalf("failed to find process: %v", err)
-    }
-    if err := p.Signal(os.Interrupt); err != nil {
-        t.Fatalf("failed to send SIGINT: %v", err)
-    }
+	// Trigger AutoStop via SIGINT (Ctrl-C)
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGINT delivery not supported on Windows; skipping test")
+	}
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("failed to find process: %v", err)
+	}
+	if err := p.Signal(os.Interrupt); err != nil {
+		t.Fatalf("failed to send SIGINT: %v", err)
+	}
 	time.Sleep(100 * time.Millisecond)
 
 	// Now call Stop() manually — should be a no-op and not panic.
@@ -209,6 +209,72 @@ func TestAutoStopThenManualStop(t *testing.T) {
 
 	if logger != nil {
 		t.Error("expected logger to be nil after AutoStop + Stop")
+	}
+}
+
+// TestExternalHandlerInvoked ensures the external handler receives the
+// correct log data when set and a log entry is emitted.
+func TestExternalHandlerInvoked(t *testing.T) {
+	// Ensure a clean slate
+	Stop()
+	SetHandler(nil)
+
+	logger = newLogging(getConfig(), logLevels[INFO])
+	defer func() {
+		Stop()
+		SetHandler(nil)
+	}()
+
+	called := make(chan Log, 1)
+	SetHandler(func(ts time.Time, level, message string) {
+		called <- Log{TimeStamp: ts, Level: level, Message: message}
+	})
+
+	start := time.Now()
+	Info("external handler message")
+	end := time.Now()
+
+	select {
+	case got := <-called:
+		if got.Level != "INFO" {
+			t.Fatalf("expected level INFO, got %s", got.Level)
+		}
+		if got.Message != "external handler message" {
+			t.Fatalf("expected message to match, got %s", got.Message)
+		}
+		if got.TimeStamp.Before(start) || got.TimeStamp.After(end) {
+			t.Fatalf("timestamp %v not within expected range", got.TimeStamp)
+		}
+	default:
+		t.Fatal("expected external handler to be called")
+	}
+}
+
+// TestExternalHandlerNotInvokedBelowLevel ensures the external handler is not
+// called when the log entry is filtered out by the current log level.
+func TestExternalHandlerNotInvokedBelowLevel(t *testing.T) {
+	// Ensure a clean slate
+	Stop()
+	SetHandler(nil)
+
+	logger = newLogging(getConfig(), logLevels[WARN])
+	defer func() {
+		Stop()
+		SetHandler(nil)
+	}()
+
+	called := make(chan struct{}, 1)
+	SetHandler(func(ts time.Time, level, message string) {
+		called <- struct{}{}
+	})
+
+	Info("should be filtered")
+
+	select {
+	case <-called:
+		t.Fatal("external handler should not be called for filtered log")
+	default:
+		// expected
 	}
 }
 
